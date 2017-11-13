@@ -99,8 +99,10 @@ class SlidingPuzzle(object):
         self.photo_label = Label(self.frame, text = "Filename: ")
         self.photo_label.grid(row=1, column=0, columnspan=2)
         # Text box for entering a file name
-        self.photo_entry = Entry(self.frame, width=45)
+        self.photo_entry = Entry(self.frame, width=50)
         self.photo_entry.grid(row=1, column=2, columnspan=3)
+        self.photo_entry.insert(0, 'Enter to load file, mouse/arrow keys to move, F1 for help.')
+        self.photo_entry.selection_range(0, END)
         self.photo_entry.focus_set()
 
         # Label for entering rows
@@ -130,55 +132,111 @@ class SlidingPuzzle(object):
         self.color_chooser.grid(row=3, column=0, columnspan=2)
         
         # Button for toggling text
-        self.text_toggle = Button(self.frame, text='Show Numbering', command=self.toggle_text)
+        self.text_toggle = Button(self.frame, text='Toggle Numbering', command=self.toggle_text)
         self.text_toggle.grid(row=3, column=2, columnspan=2)
         self.show_text = True
         
         # Button for toggling image
-        self.img_toggle = Button(self.frame, text='Show Image', command=self.toggle_image)
+        self.img_toggle = Button(self.frame, text='Toggle Image', command=self.toggle_image)
         self.img_toggle.grid(row=3, column=4, columnspan=1)
         self.show_image = True
+        
+        # Button for toggling key axis inversion
+        self.key_toggle = Button(self.frame, text='Invert keys', command=self.toggle_keys)
+        self.key_toggle.grid(row=3, column=5, columnspan=1)
+        self.key_axis = True
 
         self.parent.bind("<Return>", self.draw_board) # bind the Enter button
+        self.parent.bind("<F1>", self.show_help)
+    
+    def show_help(self, event=None):
+        '''
+        Pops a basic help window.
+        '''
+        t = Toplevel(self.parent)
+        m = Message(t, text='''\tEnter a local file path or a URL, then press Enter to begin. '''
+        '''For example, C:\\Users\\photos\\myphoto.jpg or http://www.example.com/photo.jpg. '''
+        '''You can specify a local folder for randomly-selected photos by entering the path. For example, C:\\Users\\photos\\.\n\t'''
+        '''Enter the number of rows and columns for your puzzle (minimum 3 for each) and select a maximum height for the board in pixels.'''
+        '''If your chosen image is taller than the maximum height, it will be automatically scaled down. Images below this maximum '''
+        '''height will be displayed at their full size.\n\t'''
+        '''You can start/restart by pressing Enter or right-clicking the game board. '''
+        '''To move, click a valid tile. You can move quickly by clicking and dragging through the game board. You can also move '''
+        '''with the keyboard's arrow keys. If they seem backwards, click the Invert Keys button.\n\t'''
+        '''You can choose a different color for the empty background tile with the BG Color button. '''
+        '''You can toggle the tile numbers with the Toggle Numbering button, '''
+        '''or show/hide the image itself with the Toggle Image button.''', width=300)
+        m.pack()
 
+    def toggle_keys(self):
+        '''
+        Inverts the keyboard control axis.
+        '''
+        if self.key_axis: # if it's at the standard,
+            self.key_axis = False # set it to inverted and invert them
+            self.board.bind("<Left>", lambda x: self.move((max(0,self.spare.x_loc-1), self.spare.y_loc)))
+            self.board.bind("<Up>", lambda x: self.move((self.spare.x_loc, max(0,self.spare.y_loc-1))))
+            self.board.bind("<Right>", lambda x: self.move((min(self.photo_columns-1,self.spare.x_loc+1), self.spare.y_loc)))
+            self.board.bind("<Down>", lambda x: self.move((self.spare.x_loc, min(self.photo_rows-1,self.spare.y_loc+1))))
+        else: # otherwise,
+            self.key_axis = True # set it to normal and reset to default
+            self.board.bind("<Left>", lambda x: self.move((min(self.photo_columns-1,self.spare.x_loc+1), self.spare.y_loc)))
+            self.board.bind("<Up>", lambda x: self.move((self.spare.x_loc, min(self.photo_rows-1,self.spare.y_loc+1))))
+            self.board.bind("<Right>", lambda x: self.move((max(0,self.spare.x_loc-1), self.spare.y_loc)))
+            self.board.bind("<Down>", lambda x: self.move((self.spare.x_loc, max(0,self.spare.y_loc-1))))
+        if self.success: # if the board is complete at this point, unbind everything
+            self.board.unbind("<Left>")
+            self.board.unbind("<Up>")
+            self.board.unbind("<Down>")
+            self.board.unbind("<Right>")
+    
     def choose_color(self):
-        temp = colorchooser.askcolor()[1] # if not, pop a chooser
-        if temp:
-            self.board.config(bg=temp)
-            self.bgcolor = temp
+        '''
+        Pops a color chooser for the background.
+        '''
+        temp = colorchooser.askcolor()[1] # pop a chooser
+        if temp: # if a choice was made,
+            self.board.config(bg=temp) # use it
+            self.bgcolor = temp # and save it
             
     def toggle_text(self):
-        if self.show_text:
-            newstate = HIDDEN
-            self.show_text = False
-        else:
-            newstate = NORMAL
-            self.show_text = True
-        for t in self.labels.values():
-            self.board.itemconfig(t, state=newstate)
-        for b in self.text_bgs.values():
-            self.board.itemconfig(b, state=newstate)
+        '''
+        Toggles the tile numbering labels.
+        '''
+        if self.show_text: # if text is currently on,
+            newstate = HIDDEN # choose the other state
+            self.show_text = False # and turn it off
+        else: # otherwise,
+            newstate = NORMAL # choose the other state
+            self.show_text = True # and turn it on
+        for t in self.labels.values(): # go through all the text labels
+            self.board.itemconfig(t, state=newstate) # and set them to the new state
+        for b in self.text_bgs.values(): # go through all the label bgs
+            self.board.itemconfig(b, state=newstate) # and set them to the new state
     
     def toggle_image(self):
-        if self.show_image:
-            newstate = HIDDEN
-            self.show_image = False
-        else:
-            newstate = NORMAL
-            self.show_image = True
-        for t in self.images.values():
-            self.board.itemconfig(t, state=newstate)
-        if self.success:
-            self.board.itemconfig(self.last_piece, state=newstate)
+        '''
+        Show/hide the puzzle's image.
+        '''
+        if self.show_image: # if it's on,
+            newstate = HIDDEN # choose the other state
+            self.show_image = False # and turn it off
+        else: # otherwise,
+            newstate = NORMAL # choose the other state
+            self.show_image = True # and turn it on
+        for t in self.images.values(): # go through each image
+            self.board.itemconfig(t, state=newstate) # and set it to the new state
+        if self.success: # if the board is complete,
+            self.board.itemconfig(self.last_piece, state=newstate) # change the last tile too
     
     def draw_board(self, event):
         """
         Creates the game, wiping any previous conditions.
         """
-        try:
+        try: # try to wipe the board
             self.board.destroy()
         except AttributeError:
-            pass
+            pass # as long as there's no board
         filename = self.photo_entry.get() # get a filename from the text field
         self.photo_rows = self.rows_entry.get() # get a row from the row field
         try: # try to turn the row entry into an int
@@ -226,16 +284,16 @@ class SlidingPuzzle(object):
                 master_image = Image.open(filename)
             except: # if that fails
                 try:
-                    newname = os.path.dirname(filename)
-                    if self.img_folder != newname:
-                        self.img_folder = newname
-                        self.img_folder_contents = os.listdir(self.img_folder)
-                    f = choice(self.img_folder_contents)
-                    master_image = Image.open(os.path.join(self.img_folder, f))
-                except:
+                    newname = os.path.dirname(filename) # get a path
+                    if self.img_folder != newname: # if it's new,
+                        self.img_folder = newname # save it
+                        self.img_folder_contents = os.listdir(self.img_folder) # save the contents
+                    f = choice(self.img_folder_contents) # choose an image
+                    master_image = Image.open(os.path.join(self.img_folder, f)) # and load it
+                except: # if something's wrong there,
                     self.photo_label.config(text="Not found. ") # say so
                     return # and don't create the game
-                else:
+                else: # if it worked, say which file this is
                     self.photo_label.config(text="File {} in: ".format(f))
             else:
                 # if it works, reset the label
@@ -328,8 +386,9 @@ class SlidingPuzzle(object):
             (self.board.bbox(self.labels[(tile.x_loc,tile.y_loc)]), \
             outline='white', fill='white') for tile in self.all_tiles}
         for l in self.labels.values():
-            self.board.tag_raise(l)
+            self.board.tag_raise(l) # put the numbers above the bgs
         
+        # turn off the text/image if we're not supposed to show them
         if not self.show_text:
             self.show_text = True
             self.toggle_text()
@@ -340,10 +399,14 @@ class SlidingPuzzle(object):
         # bind the Enter button and right-click-release button to drawing a new board
         self.parent.bind("<Return>", self.draw_board)
         self.board.bind("<ButtonRelease-3>", self.draw_board)
-        # and left-click to move a tile
+        # and left-click, drag, and arrow keys to move a tile
         self.board.bind("<Button-1>", self.move)
         self.board.bind("<B1-Motion>", self.move)
-        self.parent.after(500, lambda: self.parent.wm_geometry(''))            
+        self.board.bind("<Left>", lambda x: self.move((min(self.photo_columns-1,self.spare.x_loc+1), self.spare.y_loc)))
+        self.board.bind("<Up>", lambda x: self.move((self.spare.x_loc, min(self.photo_rows-1,self.spare.y_loc+1))))
+        self.board.bind("<Right>", lambda x: self.move((max(0,self.spare.x_loc-1), self.spare.y_loc)))
+        self.board.bind("<Down>", lambda x: self.move((self.spare.x_loc, max(0,self.spare.y_loc-1))))
+        self.board.focus_set()
         
     def move(self, event):
         """
@@ -352,9 +415,12 @@ class SlidingPuzzle(object):
             event (sequence): data describing the input. In this case, it's
             just the mouse cursor coordinates when the mouse was left-clicked.
         """
-        # Parses the mouse cursor location at the time of the click into a
-        # tuple that the game's logic can handle.
-        click = (event.x//self.x_step, event.y//self.y_step)
+        if isinstance(event, tuple): # if it's a tuple,
+            click = event # perfect
+        else: # if not...
+            # Parses the mouse cursor location at the time of the click into a
+            # tuple that the game's logic can handle.
+            click = (event.x//self.x_step, event.y//self.y_step)
 
         # make a set of tuples that describe the locations of four tiles around
         # the empty space
@@ -416,8 +482,13 @@ class SlidingPuzzle(object):
                     self.last_piece = self.board.create_image((self.photo_columns-1)* \
                     self.x_step, (self.photo_rows-1)*self.y_step, anchor=NW, \
                     image=self.spare.img, state=NORMAL if self.show_image else HIDDEN)
+                    # and unbind all the movement keys
                     self.board.unbind("<Button-1>")
                     self.board.unbind("<B1-Motion>")
+                    self.board.unbind("<Left>")
+                    self.board.unbind("<Up>")
+                    self.board.unbind("<Down>")
+                    self.board.unbind("<Right>")
                 # don't keep checking whether we clicked on one of the other
                 # tiles, because we already found it
                 return
