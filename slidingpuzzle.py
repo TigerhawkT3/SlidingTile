@@ -10,7 +10,7 @@
 #-------------------------------------------------------------------------------
 from tkinter import *
 from random import *
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageSequence
 from tkinter import colorchooser
 import os
 import urllib.request
@@ -31,14 +31,15 @@ class Tile(object):
             metadata such as size.
         img (PhotoImage): the PhotoImage object for this tile, which can then
             be drawn on the canvas with create_image().
+        seq (list): all of this tile's PhotoImage objects (for animations)
     """
-    def __init__(self, unit_id, x_loc, y_loc, img):
-        img.load()
+    def __init__(self, unit_id, x_loc, y_loc, img, seq):
         self.unit_id = unit_id
         self.x_loc = x_loc
         self.y_loc = y_loc
         self.img_data = img
-        self.img = ImageTk.PhotoImage(img)
+        self.seq = seq
+        self.img = img
 
 class SlidingPuzzle(object):
     """
@@ -104,6 +105,15 @@ class SlidingPuzzle(object):
         self.photo_entry.insert(0, 'Enter to load file, mouse/arrow keys to move, F1 for help.')
         self.photo_entry.selection_range(0, END)
         self.photo_entry.focus_set()
+        
+        # Text box for entering animation FPS
+        self.fps_entry = Entry(self.frame, width=3)
+        self.fps_entry.grid(row=1, column=5)
+        self.fps_entry.insert(0, 'FPS')
+        
+        # Button for choosing FPS
+        self.fps_button = Button(self.frame, text='>', command=self.update_fps)
+        self.fps_button.grid(row=1, column=5, sticky=E)
 
         # Label for entering rows
         self.rows_label = Label(self.frame, text = "Rows: ")
@@ -145,6 +155,8 @@ class SlidingPuzzle(object):
         self.key_toggle = Button(self.frame, text='Invert keys', command=self.toggle_keys)
         self.key_toggle.grid(row=3, column=5, columnspan=1)
         self.key_axis = True
+        
+        self.animation_schedule = lambda: None
 
         self.parent.bind("<Return>", self.draw_board) # bind the Enter button
         self.parent.bind("<F1>", self.show_help)
@@ -154,7 +166,7 @@ class SlidingPuzzle(object):
         Pops a basic help window.
         '''
         t = Toplevel(self.parent)
-        m = Message(t, text='''\tEnter a local file path or a URL, then press Enter to begin. '''
+        m = Message(t, text='''\tEnter a local file path or a URL, then right-click or press Enter to begin. '''
         '''For example, C:\\Users\\photos\\myphoto.jpg or http://www.example.com/photo.jpg. '''
         '''You can specify a local folder for randomly-selected photos by entering the path. For example, C:\\Users\\photos\\.\n\t'''
         '''Enter the number of rows and columns for your puzzle (minimum 3 for each) and select a maximum height for the board in pixels.'''
@@ -165,7 +177,11 @@ class SlidingPuzzle(object):
         '''with the keyboard's arrow keys. If they seem backwards, click the Invert Keys button.\n\t'''
         '''You can choose a different color for the empty background tile with the BG Color button. '''
         '''You can toggle the tile numbers with the Toggle Numbering button, '''
-        '''or show/hide the image itself with the Toggle Image button.''', width=300)
+        '''or show/hide the image itself with the Toggle Image button.\n\t'''
+        '''If your image is an animation (such as a GIF), it will animate at a default of 30 FPS. '''
+        '''You can choose a custom framerate between 1 and 120 FPS by entering it to the '''
+        '''right of the filename entry box and either restarting (with Enter or right click) or '''
+        '''clicking the ">" button just to the right of the FPS entry box.''', width=300)
         m.pack()
 
     def toggle_keys(self):
@@ -272,7 +288,7 @@ class SlidingPuzzle(object):
 
         if filename.startswith('http'): # if it's a URL
             try: # try to download and open it
-                master_image = Image.open(io.BytesIO(urllib.request.urlopen(filename).read()))
+                orig = Image.open(io.BytesIO(urllib.request.urlopen(filename).read()))
             except: # if it fails,
                 self.photo_label.config(text="Not found. ") # say so
                 return
@@ -281,7 +297,7 @@ class SlidingPuzzle(object):
                 self.photo_label.config(text="Filename: ")
         else: # if it's not a URL
             try: # try to open the image in the given filename
-                master_image = Image.open(filename)
+                orig = Image.open(filename)
             except: # if that fails
                 try:
                     newname = os.path.dirname(filename) # get a path
@@ -289,7 +305,7 @@ class SlidingPuzzle(object):
                         self.img_folder = newname # save it
                         self.img_folder_contents = os.listdir(self.img_folder) # save the contents
                     f = choice(self.img_folder_contents) # choose an image
-                    master_image = Image.open(os.path.join(self.img_folder, f)) # and load it
+                    orig = Image.open(os.path.join(self.img_folder, f)) # and load it
                 except: # if something's wrong there,
                     self.photo_label.config(text="Not found. ") # say so
                     return # and don't create the game
@@ -298,12 +314,16 @@ class SlidingPuzzle(object):
             else:
                 # if it works, reset the label
                 self.photo_label.config(text="Filename: ")
-
+        sequence = list(ImageSequence.Iterator(orig)) # exhaust the iterator to find the animation length
+        master_image = sequence[0] # get a base image
         if master_image.size[1] > max_height: # if the image is too big,
-            master_image = master_image.resize \
-            ((int(master_image.size[0]*max_height/master_image.size[1]), \
-            max_height), resample=Image.ANTIALIAS) # resize it according to the entered max height
-
+            width = int(master_image.size[0]*max_height/master_image.size[1])
+            for i in range(len(sequence)):
+                sequence[i] = sequence[i].resize((width, max_height),
+                                                 resample=Image.ANTIALIAS) # resize it according to the entered max height
+            master_image = master_image.resize((int(master_image.size[0]*max_height/master_image.size[1]),
+                                                   max_height),
+                                                   resample=Image.ANTIALIAS)
         self.all_tiles = [] # create a list for the Tiles
         # this will be the width of each tile, in pixels
         self.x_step = int(master_image.size[0]/self.photo_columns)
@@ -314,12 +334,21 @@ class SlidingPuzzle(object):
             for column in range(self.photo_columns): # and column,
                 # add a new Tile to the list, with the current ID, and a
                 # column and row based on the location of the cropped image
-                # within the master image
-                self.all_tiles.append(Tile(current_id, column, row, \
-                master_image.crop( \
-                (column*self.x_step, row*self.y_step, \
-                (column + 1) * self.x_step, \
-                (row + 1) * self.y_step))))
+                # within the master image, and a sequence of the crops
+                dim = (column*self.x_step,
+                       row*self.y_step,
+                       (column + 1) * self.x_step,
+                       (row + 1) * self.y_step
+                      )
+                s = [ImageTk.PhotoImage(img.crop(dim))
+                            for img in ImageSequence.Iterator(orig)]
+                self.all_tiles.append(Tile(current_id,
+                                           column,
+                                           row,
+                                           master_image.crop(dim),
+                                           s
+                                           )
+                                       )
                 # increment the current ID for the next Tile to use
                 current_id += 1
 
@@ -373,7 +402,7 @@ class SlidingPuzzle(object):
         # which we can later access with a location tuple as the key
         self.images = {(tile.x_loc,tile.y_loc):self.board.create_image \
             (tile.x_loc*self.x_step, tile.y_loc*self.y_step, \
-            anchor=NW, image=tile.img) for tile in self.all_tiles}
+            anchor=NW, image=tile.seq[0]) for tile in self.all_tiles}
         # create each Tile's coordinate label and save it in a dictionary,
         # which we can later access with a location tuple as the key
         self.labels = {(tile.x_loc,tile.y_loc):self.board.create_text \
@@ -407,7 +436,18 @@ class SlidingPuzzle(object):
         self.board.bind("<Right>", lambda x: self.move((max(0,self.spare.x_loc-1), self.spare.y_loc)))
         self.board.bind("<Down>", lambda x: self.move((self.spare.x_loc, max(0,self.spare.y_loc-1))))
         self.board.focus_set()
-        
+        self.parent.after_cancel(self.animation_schedule)
+        if len(sequence) > 1:
+            self.update_fps()
+            self.animate(1)
+    
+    def update_fps(self):
+        """
+        Updates the animation's FPS value.
+        """
+        fps = self.fps_entry.get()
+        self.fps_ms = 1000//min(max(1, int(fps)), 120) if fps.isdigit() else 33
+    
     def move(self, event):
         """
         Process the user's clicks into moves on the board.
@@ -479,9 +519,13 @@ class SlidingPuzzle(object):
                 else: # if we didn't break on failure, then each Tile is now in the
                       # right place, so it's a win
                     # fill in the corner piece with the spare tile's image
-                    self.last_piece = self.board.create_image((self.photo_columns-1)* \
-                    self.x_step, (self.photo_rows-1)*self.y_step, anchor=NW, \
-                    image=self.spare.img, state=NORMAL if self.show_image else HIDDEN)
+                    
+                    self.all_tiles.append(self.spare)
+                    self.spare.y_loc = self.photo_rows-1
+                    self.spare.x_loc = self.photo_columns-1
+                    self.images[(self.spare.x_loc, self.spare.y_loc)] = self.board.create_image(
+                        self.spare.x_loc*self.x_step, self.spare.y_loc*self.y_step, anchor=NW, image=self.spare.seq[0],
+                        state=NORMAL if self.show_image else HIDDEN)
                     # and unbind all the movement keys
                     self.board.unbind("<Button-1>")
                     self.board.unbind("<B1-Motion>")
@@ -492,6 +536,17 @@ class SlidingPuzzle(object):
                 # don't keep checking whether we clicked on one of the other
                 # tiles, because we already found it
                 return
+        
+    def animate(self, counter):
+        """
+        Animates the image sequence.
+        Parameter:
+            counter: the index of the next image from the sequence list
+        """
+        for tile in self.all_tiles:
+            tile.img = tile.seq[counter]
+            self.board.itemconfig(self.images[(tile.x_loc,tile.y_loc)], image=tile.img)
+        self.animation_schedule = self.parent.after(self.fps_ms, self.animate, (counter+1) % len(tile.seq))
 
 def main():
     root = Tk() # Create a Tk object from tkinter.
