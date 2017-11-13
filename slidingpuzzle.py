@@ -11,6 +11,10 @@
 from tkinter import *
 from random import *
 from PIL import Image, ImageTk
+from tkinter import colorchooser
+import os
+import urllib.request
+import io
 
 class Tile(object):
     """
@@ -42,15 +46,23 @@ class SlidingPuzzle(object):
     popular between February and July of 1880.
     Attributes:
         all_tiles (list): a list containing each Tile.
+        bgcolor (str): a string representing the canvas bg color, or None.
         board (Canvas): the visible board, containing Tile images.
+        color_chooser (Button): a button to choose the bg color.
         columns_entry (Entry): a text box for entering the number of columns.
         columns_label (Label): a label prompting the user for a column entry.
-        frame (Frame): a tkinter Frame that holds the visible game
+        frame (Frame): a tkinter Frame that holds the visible game.
         height_entry (Entry):  a text box for entering the max height in pixels.
         height_label (Label): a label prompting the user for a max height entry.
         images (dictionary): a tuple:int dictionary, with each tuple being an
             (x,y) representation of a location on the board and each int being
             used to refer to images drawn by tkinter with create_image().
+        img_folder (str): a string of the current image folder path, or None.
+        img_toggle (Button): a button to show/hide the image.
+        labels (dictionary): a tuple:int dictionary, with each tuple being an
+            (x,y) representation of a location on the board and each int being
+            used to refer to text labels drawn by tkinter with create_text().
+        last_piece (int): the ID of the last (lower-right corner) image.
         parent (Tk): a reference to the root Tk object.
         photo_columns (int): the number of columns in the current puzzle.
         photo_entry (Entry):  a text box for entering the photo's filename.
@@ -58,16 +70,27 @@ class SlidingPuzzle(object):
         photo_rows (int): the number of rows in the current puzzle.
         rows_entry (Entry): a text box for entering the number of rows.
         rows_label (Label): a label prompting the user for a row entry.
+        show_image (bool): whether the image is displayed.
+        show_text (bool): whether the numbering is displayed.
         spare (Tile): the lower-right corner Tile, which is effectively removed
             from the puzzle until it's completed, at which point its image
             will be drawn.
+        success (bool): whether the game has been won yet.
+        text_bgs (dictionary): a tuple:int dictionary, with each tuple being an
+            (x,y) representation of a location on the board and each int being
+            used to refer to label bgs drawn by tkinter with create_rectangle().
+        text_toggle (Button): a button to show/hide the numbering.
         x_step (int): the length in pixels of each tile's x-axis.
         y_step (int): the length in pixels of each tile's y-axis.
     """
     def __init__(self, parent):
         parent.title("Sliding Puzzle") # title for the window
         self.parent = parent
-
+        self.bgcolor = None
+        self.img_folder = None
+        self.all_tiles = None
+        self.success = False
+        self.last_piece = None
         # Here's the frame:
         self.frame = Frame(parent)
         self.frame.pack()
@@ -76,8 +99,9 @@ class SlidingPuzzle(object):
         self.photo_label = Label(self.frame, text = "Filename: ")
         self.photo_label.grid(row=1, column=0, columnspan=2)
         # Text box for entering a file name
-        self.photo_entry = Entry(self.frame, width=32)
-        self.photo_entry.grid(row=1, column=2, columnspan=4)
+        self.photo_entry = Entry(self.frame, width=45)
+        self.photo_entry.grid(row=1, column=2, columnspan=3)
+        self.photo_entry.focus_set()
 
         # Label for entering rows
         self.rows_label = Label(self.frame, text = "Rows: ")
@@ -98,15 +122,63 @@ class SlidingPuzzle(object):
         self.height_label.grid(row=2, column=4)
         # Text box for entering a max height
         self.height_entry = Entry(self.frame, width=5)
+        self.height_entry.insert(0, '600')
         self.height_entry.grid(row=2, column=5, padx=5)
+        
+        # Button for choosing bg
+        self.color_chooser = Button(self.frame, text='BG Color', command=self.choose_color)
+        self.color_chooser.grid(row=3, column=0, columnspan=2)
+        
+        # Button for toggling text
+        self.text_toggle = Button(self.frame, text='Show Numbering', command=self.toggle_text)
+        self.text_toggle.grid(row=3, column=2, columnspan=2)
+        self.show_text = True
+        
+        # Button for toggling image
+        self.img_toggle = Button(self.frame, text='Show Image', command=self.toggle_image)
+        self.img_toggle.grid(row=3, column=4, columnspan=1)
+        self.show_image = True
 
         self.parent.bind("<Return>", self.draw_board) # bind the Enter button
 
+    def choose_color(self):
+        temp = colorchooser.askcolor()[1] # if not, pop a chooser
+        if temp:
+            self.board.config(bg=temp)
+            self.bgcolor = temp
+            
+    def toggle_text(self):
+        if self.show_text:
+            newstate = HIDDEN
+            self.show_text = False
+        else:
+            newstate = NORMAL
+            self.show_text = True
+        for t in self.labels.values():
+            self.board.itemconfig(t, state=newstate)
+        for b in self.text_bgs.values():
+            self.board.itemconfig(b, state=newstate)
+    
+    def toggle_image(self):
+        if self.show_image:
+            newstate = HIDDEN
+            self.show_image = False
+        else:
+            newstate = NORMAL
+            self.show_image = True
+        for t in self.images.values():
+            self.board.itemconfig(t, state=newstate)
+        if self.success:
+            self.board.itemconfig(self.last_piece, state=newstate)
+    
     def draw_board(self, event):
         """
         Creates the game, wiping any previous conditions.
         """
-
+        try:
+            self.board.destroy()
+        except AttributeError:
+            pass
         filename = self.photo_entry.get() # get a filename from the text field
         self.photo_rows = self.rows_entry.get() # get a row from the row field
         try: # try to turn the row entry into an int
@@ -140,18 +212,39 @@ class SlidingPuzzle(object):
             self.height_entry.insert(0, "10") # set it to 10
             max_height = 10 # and set height to 10
 
-        try: # try to open the image in the given filename
-            master_image = Image.open(filename)
-            # if it works, reset the label
-            self.photo_label.config(text="Filename: ")
-        except: # if that fails
-            self.photo_label.config(text="Not found. ") # say so
-            return # and don't create the game
+        if filename.startswith('http'): # if it's a URL
+            try: # try to download and open it
+                master_image = Image.open(io.BytesIO(urllib.request.urlopen(filename).read()))
+            except: # if it fails,
+                self.photo_label.config(text="Not found. ") # say so
+                return
+            else:
+                # if it works, reset the label
+                self.photo_label.config(text="Filename: ")
+        else: # if it's not a URL
+            try: # try to open the image in the given filename
+                master_image = Image.open(filename)
+            except: # if that fails
+                try:
+                    newname = os.path.dirname(filename)
+                    if self.img_folder != newname:
+                        self.img_folder = newname
+                        self.img_folder_contents = os.listdir(self.img_folder)
+                    f = choice(self.img_folder_contents)
+                    master_image = Image.open(os.path.join(self.img_folder, f))
+                except:
+                    self.photo_label.config(text="Not found. ") # say so
+                    return # and don't create the game
+                else:
+                    self.photo_label.config(text="File {} in: ".format(f))
+            else:
+                # if it works, reset the label
+                self.photo_label.config(text="Filename: ")
 
         if master_image.size[1] > max_height: # if the image is too big,
             master_image = master_image.resize \
             ((int(master_image.size[0]*max_height/master_image.size[1]), \
-            max_height)) # resize it according to the entered max height
+            max_height), resample=Image.ANTIALIAS) # resize it according to the entered max height
 
         self.all_tiles = [] # create a list for the Tiles
         # this will be the width of each tile, in pixels
@@ -201,7 +294,7 @@ class SlidingPuzzle(object):
         # based on the way the blank tile is always the 'last' one, in the
         # lower-right corner, we need an even number of inversions if we want
         # this to be solvable.
-        if inversions % 2 == 1: # so, if it's odd,
+        if inversions % 2: # so, if it's odd,
             # switch the last two elements in the list of Tiles
             self.all_tiles[-1], self.all_tiles[-2] = \
             self.all_tiles[-2], self.all_tiles[-1]
@@ -214,20 +307,44 @@ class SlidingPuzzle(object):
         # now that we have a good set of Tiles for our puzzle, we can
         # make the board with a Canvas the size of the given (above) image
         self.board = Canvas(self.frame, width=master_image.size[0], \
-        height = master_image.size[1])
+        height = master_image.size[1], bg=self.bgcolor)
         # put the Canvas into the Frame
-        self.board.grid(row=0, column=0, columnspan=8)
+        self.board.grid(row=0, column=0, columnspan=7)
+        
         # create each Tile's image on the board and save it in a dictionary,
         # which we can later access with a location tuple as the key
         self.images = {(tile.x_loc,tile.y_loc):self.board.create_image \
             (tile.x_loc*self.x_step, tile.y_loc*self.y_step, \
             anchor=NW, image=tile.img) for tile in self.all_tiles}
-
-        # bind the Enter button to drawing a new board
+        # create each Tile's coordinate label and save it in a dictionary,
+        # which we can later access with a location tuple as the key
+        self.labels = {(tile.x_loc,tile.y_loc):self.board.create_text \
+            (tile.x_loc*self.x_step, tile.y_loc*self.y_step, \
+            anchor=NW, text=' %d' % (tile.unit_id+1),
+            font=('Arial', 14)) for tile in self.all_tiles}
+        # create each Tile's coordinate label background and save it in a dictionary,
+        # which we can later access with a location tuple as the key
+        self.text_bgs = {(tile.x_loc,tile.y_loc):self.board.create_rectangle \
+            (self.board.bbox(self.labels[(tile.x_loc,tile.y_loc)]), \
+            outline='white', fill='white') for tile in self.all_tiles}
+        for l in self.labels.values():
+            self.board.tag_raise(l)
+        
+        if not self.show_text:
+            self.show_text = True
+            self.toggle_text()
+        if not self.show_image:
+            self.show_image = True
+            self.toggle_image()
+        
+        # bind the Enter button and right-click-release button to drawing a new board
         self.parent.bind("<Return>", self.draw_board)
+        self.board.bind("<ButtonRelease-3>", self.draw_board)
         # and left-click to move a tile
         self.board.bind("<Button-1>", self.move)
-
+        self.board.bind("<B1-Motion>", self.move)
+        self.parent.after(500, lambda: self.parent.wm_geometry(''))            
+        
     def move(self, event):
         """
         Process the user's clicks into moves on the board.
@@ -262,36 +379,45 @@ class SlidingPuzzle(object):
         if click not in movable_tiles:
             return # then we're done here
 
-        success = True # first we'll assume the user won the game with this move
+        self.success = True # first we'll assume the user won the game with this move
         for tile in self.all_tiles: # look at each tile
             # if it's the one that was clicked on,
             if (tile.x_loc, tile.y_loc) == click:
-                # its image moves to where the spare tile is, which we're using
-                # as an "empty" space since we're not displaying its image
+                # its image, label, and label bg move to where the spare tile is,
+                # which we're using as an "empty" space since we're not displaying its image
                 self.board.coords(self.images.get(click), self.spare.x_loc * \
                 self.x_step, self.spare.y_loc * self.y_step)
+                self.board.coords(self.labels.get(click), self.spare.x_loc * \
+                self.x_step, self.spare.y_loc * self.y_step)
+                self.board.itemconfig(self.labels.get(click), state=NORMAL)
+                self.board.coords(self.text_bgs.get(click), self.board.bbox(self.labels[click]))
+                self.board.itemconfig(self.labels.get(click), state=NORMAL if self.show_text else HIDDEN)
                 # its location is set to where the spare tile ("empty" space)
                 # currently is
                 tile.x_loc, tile.y_loc = self.spare.x_loc, self.spare.y_loc
                 # the spare tile now gets a location of where the moved tile
                 # was, which is still described in the click location
                 self.spare.x_loc, self.spare.y_loc = click[0], click[1]
-                # the images dictionary has to be updated with the moved Tile's
-                # new location by making that new location point to the old
-                # value
+                # the images, labels, and text_bgs dictionaries have to be updated
+                # with the moved Tile's new location by making that new location
+                # point to the old value
                 self.images[(tile.x_loc, tile.y_loc)] = self.images.get(click)
+                self.labels[(tile.x_loc, tile.y_loc)] = self.labels.get(click)
+                self.text_bgs[(tile.x_loc, tile.y_loc)] = self.text_bgs.get(click)
                 # now to check if this was a winning move
                 for tile in self.all_tiles: # look at each tile
                     # if its ID doesn't match its current location,
                     if tile.unit_id != self.photo_columns*tile.y_loc+tile.x_loc:
-                        success = False # it wasn't a win
-
-                if success: # if each Tile is now in the right place, it's a win
+                        self.success = False # it wasn't a win
+                        break # so stop looking
+                else: # if we didn't break on failure, then each Tile is now in the
+                      # right place, so it's a win
                     # fill in the corner piece with the spare tile's image
-                    self.board.create_image((self.photo_columns-1)* \
+                    self.last_piece = self.board.create_image((self.photo_columns-1)* \
                     self.x_step, (self.photo_rows-1)*self.y_step, anchor=NW, \
-                    image=self.spare.img)
-                    self.board.unbind("<Button-1>") # and unbind the mouse
+                    image=self.spare.img, state=NORMAL if self.show_image else HIDDEN)
+                    self.board.unbind("<Button-1>")
+                    self.board.unbind("<B1-Motion>")
                 # don't keep checking whether we clicked on one of the other
                 # tiles, because we already found it
                 return
