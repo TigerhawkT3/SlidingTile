@@ -314,7 +314,8 @@ class SlidingPuzzle(object):
             else:
                 # if it works, reset the label
                 self.photo_label.config(text="Filename: ")
-        sequence = list(ImageSequence.Iterator(orig)) # exhaust the iterator to find the animation length
+        sequence = [i.copy() for i in ImageSequence.Iterator(orig)] # exhaust the iterator to find the animation length
+        # if you don't make copies it doesn't work. don't ask me why.
         master_image = sequence[0] # get a base image
         if master_image.size[1] > max_height: # if the image is too big,
             width = int(master_image.size[0]*max_height/master_image.size[1])
@@ -341,7 +342,7 @@ class SlidingPuzzle(object):
                        (row + 1) * self.y_step
                       )
                 s = [ImageTk.PhotoImage(img.crop(dim))
-                            for img in ImageSequence.Iterator(orig)]
+                            for img in sequence]
                 self.all_tiles.append(Tile(current_id,
                                            column,
                                            row,
